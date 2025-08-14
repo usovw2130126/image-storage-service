@@ -95,6 +95,17 @@ curl -X POST "http://localhost:8000/api/v1/images/batch-upload" \
   -F "user_path=user1/batch"
 ```
 
+#### 批次上傳 + Webhook 回調
+```bash
+curl -X POST "http://localhost:8000/api/v1/images/batch-upload" \
+  -H "X-API-Key: dev-key-123" \
+  -F "files=@image1.jpg" \
+  -F "files=@image2.jpg" \
+  -F "user_path=user1/batch" \
+  -F "webhook_url=https://your-domain.com/webhook" \
+  -F "webhook_headers={\"Authorization\": \"Bearer your-token\"}"
+```
+
 **查詢批次進度:**
 ```bash
 curl -H "X-API-Key: dev-key-123" \
@@ -295,6 +306,61 @@ python -m pytest tests/
 ### 建構 Docker 映像
 ```bash
 docker build -t image-storage-service .
+```
+
+## 🔔 Webhook 回調
+
+### Webhook 事件類型
+
+批次上傳支援 webhook 自動回調，系統會在以下時機發送通知：
+
+1. **進度更新** (`batch_progress`)
+2. **批次完成** (`batch_completed`)
+
+### Webhook 回調格式
+
+#### 進度更新回調
+```json
+{
+  "event_type": "batch_progress",
+  "batch_id": "batch-xxx",
+  "status": "processing", 
+  "progress": {
+    "total": 100,
+    "completed": 45,
+    "failed": 2,
+    "progress_percentage": 47.0
+  },
+  "api_key": "your-api-key",
+  "timestamp": "2024-01-01T12:00:00Z"
+}
+```
+
+#### 批次完成回調
+```json
+{
+  "event_type": "batch_completed",
+  "batch_id": "batch-xxx",
+  "results": {
+    "total": 100,
+    "completed": 98,
+    "failed": 2,
+    "results": [...],
+    "start_time": "2024-01-01T12:00:00Z",
+    "end_time": "2024-01-01T12:05:00Z"
+  },
+  "api_key": "your-api-key",
+  "timestamp": "2024-01-01T12:05:00Z"
+}
+```
+
+### Webhook 配置
+
+**環境變數:**
+```bash
+WEBHOOK_TIMEOUT=30          # Webhook 請求超時時間 (秒)
+WEBHOOK_RETRY_ATTEMPTS=3    # 重試次數
+WEBHOOK_RETRY_DELAY=5       # 重試間隔 (秒)
 ```
 
 ## 📄 API 錯誤碼

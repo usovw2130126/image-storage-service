@@ -35,3 +35,8 @@ ALLOWED_MIME_TYPES = {
 # 圖片處理預設值
 DEFAULT_QUALITY = 85
 DEFAULT_RESIZE_MODE = "fit"  # fit, fill, crop
+
+# Webhook 配置
+WEBHOOK_TIMEOUT = int(os.getenv("WEBHOOK_TIMEOUT", 30))  # seconds
+WEBHOOK_RETRY_ATTEMPTS = int(os.getenv("WEBHOOK_RETRY_ATTEMPTS", 3))
+WEBHOOK_RETRY_DELAY = int(os.getenv("WEBHOOK_RETRY_DELAY", 5))  # seconds

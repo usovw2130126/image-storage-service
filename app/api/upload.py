@@ -114,6 +114,8 @@ async def upload_image(
 async def batch_upload_images(
     files: List[UploadFile] = File(...),
     user_path: str = Form(...),
+    webhook_url: Optional[str] = Form(None),
+    webhook_headers: Optional[str] = Form(None),
     background_tasks: BackgroundTasks = BackgroundTasks(),
     api_key: str = Depends(get_api_key),
     api_key_config: dict = Depends(get_api_key_config)
@@ -142,6 +144,15 @@ async def batch_upload_images(
         # 生成批次 ID
         batch_id = f"batch-{generate_uuid()}"
         
+        # 解析 webhook headers
+        parsed_webhook_headers = None
+        if webhook_headers:
+            try:
+                import json
+                parsed_webhook_headers = json.loads(webhook_headers)
+            except json.JSONDecodeError:
+                pass
+        
         # 初始化批次進度
         batch_progress[batch_id] = {
             "total": len(files),
@@ -149,7 +160,9 @@ async def batch_upload_images(
             "failed": 0,
             "status": "processing",
             "results": [],
-            "start_time": datetime.utcnow().isoformat()
+            "start_time": datetime.utcnow().isoformat(),
+            "webhook_url": webhook_url,
+            "webhook_headers": parsed_webhook_headers
         }
         
         # 添加背景任務
@@ -232,7 +245,25 @@ async def get_batch_progress(
 async def process_batch_upload(batch_id: str, files: List[UploadFile], 
                              user_path: str, api_key: str):
     """背景處理批次上傳"""
-    progress = batch_progress[batch_id]
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        from app.services.webhook import webhook_service
+        
+        if batch_id not in batch_progress:
+            logger.error(f"Batch {batch_id} not found in progress tracking")
+            return
+            
+        progress = batch_progress[batch_id]
+        webhook_url = progress.get("webhook_url")
+        webhook_headers = progress.get("webhook_headers")
+        
+        logger.info(f"Starting batch processing for {batch_id}, webhook_url: {webhook_url}")
+        
+    except Exception as e:
+        logger.error(f"Error in process_batch_upload setup: {e}")
+        return
     
     for i, file in enumerate(files):
         try:
@@ -275,6 +306,21 @@ async def process_batch_upload(batch_id: str, files: List[UploadFile],
             })
             progress["completed"] += 1
             
+            # 發送進度 webhook (每完成 10% 或每 10 張圖片)
+            if webhook_url and (
+                (progress["completed"] + progress["failed"]) % max(1, len(files) // 10) == 0 or
+                progress["completed"] % 10 == 0
+            ):
+                progress_data = {
+                    "total": progress["total"],
+                    "completed": progress["completed"],
+                    "failed": progress["failed"],
+                    "progress_percentage": (progress["completed"] + progress["failed"]) / progress["total"] * 100
+                }
+                await webhook_service.send_batch_progress_webhook(
+                    webhook_url, batch_id, "processing", progress_data, api_key, webhook_headers
+                )
+            
         except Exception as e:
             # 記錄失敗結果
             progress["results"].append({
@@ -287,3 +333,25 @@ async def process_batch_upload(batch_id: str, files: List[UploadFile],
     # 更新最終狀態
     progress["status"] = "completed"
     progress["end_time"] = datetime.utcnow().isoformat()
+    
+    logger.info(f"Batch {batch_id} completed: {progress['completed']} success, {progress['failed']} failed")
+    
+    # 發送完成 webhook
+    if webhook_url:
+        logger.info(f"Sending completion webhook to {webhook_url}")
+        final_results = {
+            "batch_id": batch_id,
+            "total": progress["total"],
+            "completed": progress["completed"],
+            "failed": progress["failed"],
+            "results": progress["results"],
+            "start_time": progress["start_time"],
+            "end_time": progress["end_time"]
+        }
+        try:
+            success = await webhook_service.send_batch_completed_webhook(
+                webhook_url, batch_id, final_results, api_key, webhook_headers
+            )
+            logger.info(f"Webhook completion result: {success}")
+        except Exception as e:
+            logger.error(f"Error sending completion webhook: {e}")
